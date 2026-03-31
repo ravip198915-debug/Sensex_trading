@@ -232,6 +232,7 @@ SCRIPT_RUNNING=True
 ENTRY_LOCK = False
 LAST_TICK_TIME = time.time()
 ENTRY_TIME = None
+OPTION_LTP_TS = 0.0
 
 AUTO_SIGNAL="NO TRADE"
 allowed_side=None
@@ -251,6 +252,12 @@ FIRST_TRADE_RESULT=None
 DAY_MODE=None
 
 PAPER_POSITION_QTY=0
+
+STRIKE_INTERVAL = 100
+ORDER_FILL_POLL_SEC = 0.3
+ENTRY_PROTECT_SEC = 0.8
+SL_TARGET_BUFFER = 1.0
+LTP_STALE_SEC = 0.7
 
 # ================= RISK CONTROL =================
 
@@ -419,15 +426,12 @@ def get_atm_from_expiry(spot, side, expiry):
     if not options:
         return None, None
 
-    # ✅ Correct strike comparison (VERY IMPORTANT)
-    atm = min(options, key=lambda x: abs(x["strike"] - spot))
+    rounded_spot = round(spot / STRIKE_INTERVAL) * STRIKE_INTERVAL
+    atm = min(options, key=lambda x: abs(x["strike"] - rounded_spot))
 
     symbol = atm["exchange"] + ":" + atm["tradingsymbol"]
 
-    print(f"Spot: {spot}")
-    print(f"Selected Strike: {atm['strike']}")
-    print(f"Expiry: {expiry}")
-    print(f"Symbol: {symbol}")
+    print(f"Strike Select | Spot:{spot} Rounded:{rounded_spot} Strike:{atm['strike']} | {symbol}")
 
     return symbol, atm["instrument_token"]
 
@@ -505,13 +509,11 @@ def is_liquid(symbol):
 
         spread = ask - bid
 
-        print(f"Checking Liquidity → {symbol} | OI:{oi} | Spread:{spread:.2f}")
-
         # ✅ Liquidity condition (you can tune this)
         if oi >= 1000 and spread <= 3:
             return True
 
-        print(f"{YELLOW}Illiquid → OI:{oi}, Spread:{spread:.2f}{RESET}")
+        print(f"{YELLOW}Illiquid → {symbol} | OI:{oi}, Spread:{spread:.2f}{RESET}")
         return False
 
     except Exception as e:
@@ -544,9 +546,9 @@ def place_live_buy(sym):
         # Wait until order is filled
         fill_price = None
 
-        for i in range(10):
+        for i in range(20):
 
-            time.sleep(1)
+            time.sleep(ORDER_FILL_POLL_SEC)
 
             try:
                 order_details = kite.order_history(order_id)
@@ -637,10 +639,11 @@ def fetch_spot():
     except: pass
 
 def fetch_option_ltp():
-    global option_ltp
+    global option_ltp, OPTION_LTP_TS
     try:
         ltp_data = kite.ltp([ACTIVE_SYMBOL])
         option_ltp = ltp_data[ACTIVE_SYMBOL]["last_price"]
+        OPTION_LTP_TS = time.time()
     except Exception as e:
         print("Option LTP fetch error:", e)
 
@@ -716,7 +719,7 @@ def on_ticks(ws, ticks):
     
 
     global trade_open,ACTIVE_OPTION_TOKEN,ACTIVE_SYMBOL,ENTRY_LOCK
-    global ORDER_PLACED,spot_ltp,option_ltp,day_closed
+    global ORDER_PLACED,spot_ltp,option_ltp,day_closed,OPTION_LTP_TS
     global TRADE_COUNT,FIRST_TRADE_SIDE,FIRST_TRADE_RESULT
     global BLOCK_MSG_SHOWN,SCRIPT_RUNNING,LAST_TICK_TIME
     LAST_TICK_TIME = time.time()
@@ -732,6 +735,7 @@ def on_ticks(ws, ticks):
         now = datetime.now().time()
 
         # ===== PRICE UPDATE =====
+        current_tick_time = time.time()
         for t in ticks:
 
             if t.get("instrument_token") == SPOT_TOKEN:
@@ -739,6 +743,7 @@ def on_ticks(ws, ticks):
 
             if ACTIVE_OPTION_TOKEN and t.get("instrument_token") == ACTIVE_OPTION_TOKEN:
                 option_ltp = t["last_price"]
+                OPTION_LTP_TS = current_tick_time
 
         LAST_TICK_TIME = time.time()
 
@@ -800,7 +805,7 @@ def on_ticks(ws, ticks):
         # ======================================================
         # ================= ENTRY LOGIC ========================
         # ======================================================
-        if not trade_open and not ENTRY_LOCK and spot_ltp and now < LAST_ENTRY_TIME:
+        if (not trade_open) and (not ENTRY_LOCK) and spot_ltp and (now < LAST_ENTRY_TIME):
 
             if DAY_MODE == "NOTRADE" and TRADE_COUNT >= 1:
                 return
@@ -808,33 +813,19 @@ def on_ticks(ws, ticks):
             if DAY_MODE == "BUYDAY" and TRADE_COUNT == 1 and FIRST_TRADE_RESULT != "SL":
                 return
 
-            side = None
+            breakout_up = spot_ltp >= candle["high"] + 5
+            breakout_down = spot_ltp <= candle["low"] - 5
 
-            if spot_ltp >= candle["high"] + 5:
-
-                if allowed_side in ["CE", "BOTH"]:
-                    side = "CE"
-
-                else:
-                    if not BLOCK_MSG_SHOWN:
-                        print(f"{YELLOW}ENTRY BLOCKED — CE not allowed{RESET}")
-                        BLOCK_MSG_SHOWN = True
-                    return
-
-            elif spot_ltp <= candle["low"] - 5:
-
-                if allowed_side in ["PE", "BOTH"]:
-                    side = "PE"
-
-                else:
-                    if not BLOCK_MSG_SHOWN:
-                        print(f"{YELLOW}ENTRY BLOCKED — PE not allowed{RESET}")
-                        BLOCK_MSG_SHOWN = True
-                    return
-
-            else:
+            if not (breakout_up or breakout_down):
                 return
 
+            side = "CE" if breakout_up else "PE"
+            allowed = (side == "CE" and allowed_side in ["CE", "BOTH"]) or (side == "PE" and allowed_side in ["PE", "BOTH"])
+            if not allowed:
+                if not BLOCK_MSG_SHOWN:
+                    print(f"{YELLOW}ENTRY BLOCKED — {side} not allowed{RESET}")
+                    BLOCK_MSG_SHOWN = True
+                return
 
             if DAY_MODE == "BUYDAY" and TRADE_COUNT == 1:
                 if side == FIRST_TRADE_SIDE:
@@ -876,11 +867,13 @@ def on_ticks(ws, ticks):
         # ======================================================
         if trade_open and "prem_sl" in trade:
 
-            if ENTRY_TIME is not None and time.time() - ENTRY_TIME < 3:
+            if ENTRY_TIME is not None and time.time() - ENTRY_TIME < ENTRY_PROTECT_SEC:
                 return
 
-            if option_ltp is None:
-                return
+            if option_ltp is None or (time.time() - OPTION_LTP_TS) > LTP_STALE_SEC:
+                fetch_option_ltp()
+                if option_ltp is None:
+                    return
 
             if "prem_sl" not in trade:
 
@@ -923,12 +916,15 @@ def on_ticks(ws, ticks):
                 return
 
 
-            if option_ltp <= trade["prem_sl"]:
+            sl_price = trade["prem_sl"]
+            target_price = trade["prem_target"]
+
+            if option_ltp <= (sl_price + SL_TARGET_BUFFER):
 
                 reason = "SL"
                 sound_sl()
 
-            elif option_ltp >= trade["prem_target"]:
+            elif option_ltp >= (target_price - SL_TARGET_BUFFER):
 
                 reason = "TARGET"
                 sound_target()
