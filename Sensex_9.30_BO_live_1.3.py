@@ -529,7 +529,18 @@ def place_live_buy(sym):
 
     try:
 
+        if option_ltp is None:
+            print(f"{YELLOW}LIVE BUY skipped: option_ltp is None for {sym}{RESET}")
+            return
+
+        price = round(option_ltp + 2, 2)
+        if price <= 0:
+            print(f"{YELLOW}LIVE BUY skipped: invalid LIMIT price {price} for {sym}{RESET}")
+            return
+
         exchange, tradingsymbol = sym.split(":")
+
+        print(f"{GREEN}[LIVE BUY] {sym} | LIMIT Price={price}{RESET}")
 
         order_id = kite.place_order(
             variety = kite.VARIETY_REGULAR,
@@ -538,10 +549,11 @@ def place_live_buy(sym):
             transaction_type = kite.TRANSACTION_TYPE_BUY,
             quantity = LOT_SIZE,
             product = PRODUCT,
-            order_type = ORDER_TYPE
+            order_type = kite.ORDER_TYPE_LIMIT,
+            price = price
         )
 
-        print(f"{GREEN}[LIVE BUY] {sym} | Qty={LOT_SIZE} | OrderID={order_id}{RESET}")
+        print(f"{GREEN}[LIVE BUY] {sym} | Qty={LOT_SIZE} | Limit={price} | OrderID={order_id}{RESET}")
 
         # Wait until order is filled
         fill_price = None
@@ -562,7 +574,7 @@ def place_live_buy(sym):
 
                     global ENTRY_TIME
                     ENTRY_TIME = time.time()
-                    
+
                     break
 
                 if status == "REJECTED":
@@ -603,12 +615,22 @@ def place_live_buy(sym):
     except Exception as e:
         print("LIVE BUY FAILED:", e)
 
-
 def place_live_exit(sym):
 
     try:
 
+        if option_ltp is None:
+            print(f"{YELLOW}LIVE EXIT skipped: option_ltp is None for {sym}{RESET}")
+            return
+
+        price = round(option_ltp - 2, 2)
+        if price <= 0:
+            print(f"{YELLOW}LIVE EXIT skipped: invalid LIMIT price {price} for {sym}{RESET}")
+            return
+
         exchange, tradingsymbol = sym.split(":")
+
+        print(f"{RED}[LIVE EXIT] {sym} | LIMIT Price={price}{RESET}")
 
         order_id = kite.place_order(
             variety = kite.VARIETY_REGULAR,
@@ -617,10 +639,11 @@ def place_live_exit(sym):
             transaction_type = kite.TRANSACTION_TYPE_SELL,
             quantity = LOT_SIZE,
             product = PRODUCT,
-            order_type = ORDER_TYPE
+            order_type = kite.ORDER_TYPE_LIMIT,
+            price = price
         )
 
-        print(f"{RED}[LIVE EXIT] {sym} | OrderID={order_id}{RESET}")
+        print(f"{RED}[LIVE EXIT] {sym} | Limit={price} | OrderID={order_id}{RESET}")
 
         send_telegram(
             f"🔴 LIVE EXIT\n"
