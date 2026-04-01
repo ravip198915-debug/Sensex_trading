@@ -8,12 +8,15 @@ ACCESS_TOKEN ="J1kjPC1lbImMOB7X8jm837yXas1Lc57E"
 
 import asyncio
 import sys
+
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 from kiteconnect import KiteConnect, KiteTicker
 from datetime import datetime, date, time as dtime, timedelta
-import time, threading, sys
+import time
+import threading
+
 try:
     import winsound
 except ImportError:
@@ -292,16 +295,16 @@ f"Time: {datetime.now().strftime('%H:%M:%S')}"
 
 # ================= SOUND =================
 def sound_entry():
-    if winsound:
-        winsound.Beep(1200,300)
+    if winsound is not None:
+        winsound.Beep(1200, 300)
 
 def sound_sl():
-    if winsound:
-        winsound.Beep(600,700)
+    if winsound is not None:
+        winsound.Beep(600, 700)
 
 def sound_target():
-    if winsound:
-        winsound.Beep(1500,250)
+    if winsound is not None:
+        winsound.Beep(1500, 250)
 
 # ================= CPR + AUTO SIGNAL (FINAL CLEAN VERSION) =================
 def calculate_auto_signal():
