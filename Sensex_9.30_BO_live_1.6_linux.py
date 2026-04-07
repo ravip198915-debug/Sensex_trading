@@ -847,7 +847,15 @@ def on_ticks(ws, ticks):
         # ======================================================
         if (not trade_open) and (not ENTRY_LOCK) and spot_ltp and (now < LAST_ENTRY_TIME):
 
+            # === UPDATED ===
+            if CPR_TYPE == "WIDE":
+                return
+
             if DAY_MODE == "NOTRADE" and TRADE_COUNT >= 1:
+                return
+
+            # === UPDATED ===
+            if DAY_MODE == "NOTRADE" and MA_SIDE == "Above":
                 return
 
             if DAY_MODE == "BUYDAY" and TRADE_COUNT == 1 and FIRST_TRADE_RESULT != "SL":
@@ -860,6 +868,11 @@ def on_ticks(ws, ticks):
                 return
 
             side = "CE" if breakout_up else "PE"
+
+            # === UPDATED ===
+            if DAY_MODE == "NOTRADE" and MA_SIDE == "Below" and side != "PE":
+                return
+
             allowed = (side == "CE" and allowed_side in ["CE", "BOTH"]) or (side == "PE" and allowed_side in ["PE", "BOTH"])
             if not allowed:
                 if not BLOCK_MSG_SHOWN:
