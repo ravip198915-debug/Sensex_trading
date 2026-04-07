@@ -47,6 +47,8 @@ CHAT_ID = 1412356698
 
 
 bot = telebot.TeleBot(BOT_TOKEN, threaded=True)
+TELEGRAM_POLLING_STARTED = False
+TELEGRAM_POLLING_LOCK = threading.Lock()
 
 
 def send_telegram(msg):
@@ -108,14 +110,23 @@ def telegram_polling():
         try:
             bot.infinity_polling(
                 timeout=10,
-                long_polling_timeout=5
+                long_polling_timeout=5,
+                skip_pending=True
             )
         except Exception as e:
-            print("Telegram reconnect:", str(e)[:100])
-            time.sleep(3)
+            err = str(e)
+            if "409" in err or "terminated by other getUpdates request" in err:
+                print("Telegram 409 conflict, retrying:", err[:100])
+                time.sleep(5)
+            else:
+                print("Telegram reconnect:", err[:100])
+                time.sleep(3)
 
-
-threading.Thread(target=telegram_polling, daemon=True).start()
+with TELEGRAM_POLLING_LOCK:
+    if not TELEGRAM_POLLING_STARTED:
+        bot.remove_webhook()
+        threading.Thread(target=telegram_polling, daemon=True).start()
+        TELEGRAM_POLLING_STARTED = True
 
 #start
 
